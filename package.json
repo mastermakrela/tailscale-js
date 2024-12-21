@@ -1,0 +1,12 @@
+{
+	"name": "tailscale-js",
+	"module": "tailscale.ts",
+	"type": "module",
+	"types": "./src/types.d.ts",
+	"devDependencies": {
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5.6.3"
+	}
+}
