@@ -13,11 +13,9 @@ export interface TailscaleServer extends Omit<ServeOptions, "reusePort" | "unix"
 	tailscale?: TailscaleConfig;
 }
 
-// import type { ServeOptions, Server } from "bun-types";
-// import { type ServeOptions, type Server } from "bun-types";
-
-const WORKER_URL = new URL("./tailscale_worker.ts", import.meta.url);
-// const WORKER_URL = "./src/tailscale_worker.ts";
+const WORKER_URL = import.meta.url.includes("$bunfs")
+	? "./tailscale_worker.ts"
+	: new URL("./tailscale_worker.ts", import.meta.url);
 
 let server: Server | undefined;
 let ts_worker: Worker;
@@ -95,7 +93,7 @@ function create_worker({
 	ts_worker = new Worker(WORKER_URL);
 
 	ts_worker.onerror = (error) => {
-		console.error(`[${new Date().toISOString()}][tailscale] error in worker:`, error);
+		console.error(`[${new Date().toISOString()}][tailscale] error in worker:`, error.message ?? error);
 	};
 
 	ts_worker.onmessage = async (event) => {

@@ -1,10 +1,11 @@
 {
 	"name": "@mastermakrela/tailscale-js",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"license": "MIT",
 	"exports": {
 		".": "./src/tailscale.ts",
-		"./libtailscale": "./src/libtailscale.ts"
+		"./libtailscale": "./src/libtailscale.ts",
+		"./tailscale_worker": "./src/tailscale_worker.ts"
 	},
 	"publish": {
 		"exclude": ["src/index.ts", ".vscode/**"]
