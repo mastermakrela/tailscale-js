@@ -65,6 +65,10 @@ const { symbols: lib } = dlopen(libtailscale_so, {
 		args: [FFI_tailscale, FFIType.int],
 		returns: FFIType.int,
 	},
+	tailscale_getips: {
+		args: [FFI_tailscale, FFIType.cstring, FFIType.u64],
+		returns: FFIType.int,
+	},
 	tailscale_dial: {
 		args: [FFI_tailscale, FFIType.cstring, FFIType.cstring, FFIType.pointer],
 		returns: FFIType.int,
@@ -75,6 +79,10 @@ const { symbols: lib } = dlopen(libtailscale_so, {
 	},
 	tailscale_listen_funnel: {
 		args: [FFI_tailscale, FFIType.cstring, FFIType.cstring, FFIType.int, FFIType.pointer],
+		returns: FFIType.int,
+	},
+	tailscale_getremoteaddr: {
+		args: [FFI_tailscale_listener, FFI_tailscale_conn, FFIType.cstring, FFIType.u64],
 		returns: FFIType.int,
 	},
 	tailscale_accept: {
@@ -91,10 +99,6 @@ const { symbols: lib } = dlopen(libtailscale_so, {
 	},
 	tailscale_errmsg: {
 		args: [FFI_tailscale, FFIType.cstring, FFIType.u64],
-		returns: FFIType.int,
-	},
-	tailscale_ips: {
-		args: [FFI_tailscale, FFIType.cstring, FFIType.cstring],
 		returns: FFIType.int,
 	},
 	tailscale_cert_domains: {
@@ -166,6 +170,37 @@ export function tailscale_up(sd: tailscale_t): Result {
 }
 
 export type tailscale_network = "tcp" | "udp";
+
+/**
+ * Connects to the address on the tailnet.
+ *
+ * @param sd Tailscale server handle
+ * @param options Configuration options
+ * @param options.network Protocol to use ("tcp" or "udp"). Defaults to "tcp".
+ * @param options.addr String of an IP address or domain name to connect to.
+ * @returns
+ */
+export function tailscale_dial(
+	sd: tailscale_t,
+	{
+		network = "tcp",
+		addr,
+	}: {
+		network?: tailscale_network;
+		addr: string;
+	}
+): Result<tailscale_conn_t> {
+	const network_str = encoder.encode(network + "\0");
+	const addr_str = encoder.encode(addr + "\0");
+
+	const conn_ptr = new Int32Array(1);
+	if (lib.tailscale_dial(sd, conn_ptr)) {
+		const err = get_error(sd);
+		return { success: false, error: err };
+	}
+	return { success: true, value: conn_ptr[0] };
+}
+
 /**
  * Listens for connections on the tailnet.
  * Equivalent to listen(2).
@@ -241,6 +276,22 @@ export function tailscale_listen_funnel(
 }
 
 /**
+ * Returns the remote address for an incoming connection for a particular listener.
+ *
+ * @param ln A Tailscale listener handle
+ * @param conn A Tailscale connection handle
+ * @returns The address (eitehr ip4 or ip6)
+ */
+export function tailscale_getremoteaddr(ln: tailscale_listener_t, conn: tailscale_conn_t): Result<string> {
+	const addr_ptr = new Uint8Array(256);
+	if (lib.tailscale_getremoteaddr(ln, conn, addr_ptr, addr_ptr.length)) {
+		const err = get_error(ln);
+		return { success: false, error: err };
+	}
+	return { success: true, value: decoder.decode(addr_ptr) };
+}
+
+/**
  * Shuts down the server.
  * @returns Result tuple containing null on success, or error message on failure
  */
@@ -256,7 +307,7 @@ export function tailscale_close(sd: tailscale_t): Result {
  * Accepts a new connection from a Tailscale listener.
  * Similar to accept(2), blocks the calling thread until a new connection is available.
  *
- * @param ln - A Tailscale listener handle obtained from {@link tailscale_listen} or {@link tailscale_listen_funnel}.
+ * @param ln A Tailscale listener handle obtained from {@link tailscale_listen} or {@link tailscale_listen_funnel}.
  * @returns A Result containing either:
  *  - On success: a connection handle as {@link tailscale_conn_t}
  *  - On failure: an error message
@@ -287,6 +338,10 @@ export function tailscale_accept_nonblocking(ln: tailscale_listener_t): Result<t
 		return { success: false, error: err };
 	}
 	return { success: true, value: conn[0] };
+}
+
+export function tailscale_loopback() {
+	throw new Error("Not implemented");
 }
 
 // MARK: - libtailscale configuration
@@ -341,25 +396,41 @@ export function tailscale_set_dir(sd: tailscale_t, dir: string): Result {
 	return { success: true, value: undefined };
 }
 
+/**
+ * Instructs the instance to write logs to the specified file descriptor.
+ * Must be configured before any explicit or implicit call to tailscale_start.
+ *
+ * _Disclaimer_: haven't tested it in bun yet, so it might not work. fds in js are weird.
+ *
+ * @param sd - Tailscale server handle
+ * @param logfd - File descriptor for logging. Use -1 to discard all logging.
+ */
+export function tailscale_set_logfd(sd: tailscale_t, logfd: number): Result {
+	if (lib.tailscale_set_logfd(sd, logfd)) {
+		const err = get_error(sd);
+		return { success: false, error: err };
+	}
+	return { success: true, value: undefined };
+}
+
 // MARK: - libtailscale infos
 
 /**
- * TODO: document
+ * Returns the IP addresses of the the Tailscale server as a list.
  *
- * @param sd
+ * @param sd Tailscale server handle
  * @returns A list of IP addresses inside the tailnet.
  */
-export function tailscale_ips(sd: tailscale_t): Result<string[]> {
-	// i know the sizes are overkill, but it works, so ¯\_(ツ)_/¯
-	const ipv4_ptr = new Uint8Array(256);
-	const ipv6_ptr = new Uint8Array(256);
+export function tailscale_getips(sd: tailscale_t): Result<string[]> {
+	// i know the size is an overkill, but it works, so ¯\_(ツ)_/¯
+	const ips_ptr = new Uint8Array(1024);
 
-	if (lib.tailscale_ips(sd, ipv4_ptr, ipv6_ptr)) {
+	if (lib.tailscale_getips(sd, ips_ptr, ips_ptr.length)) {
 		const err = get_error(sd);
 		return { success: false, error: err };
 	}
 
-	const ips = new Set<string>([decoder.decode(ipv4_ptr).split("\0")[0].trim(), decoder.decode(ipv6_ptr).split("\0")[0].trim()]);
+	const ips = decoder.decode(ips_ptr).split("\0")[0].trim().split(",");
 
 	return { success: true, value: [...ips.values()] };
 }

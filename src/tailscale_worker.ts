@@ -5,7 +5,7 @@ import {
 	tailscale_accept_nonblocking,
 	tailscale_cert_domains,
 	tailscale_close,
-	tailscale_ips,
+	tailscale_getips,
 	tailscale_listen,
 	tailscale_listen_funnel,
 	tailscale_new,
@@ -129,12 +129,14 @@ function listen({ port, hostname }: { port?: string; hostname?: string }) {
 	}
 	listener = listen_result.value;
 
-	const ips = tailscale_ips(ts!);
+	const ips = tailscale_getips(ts);
 	const _port = port ?? ":1999";
+
+	const tailnet_name = Bun.env.LIBTAILSCALE_TAILNET_NAME ?? "<your-tailnet-name>";
 
 	console.info("[ts_worker] Tailscale serve is up and running! Waiting for connections...");
 	console.info(`[ts_worker] You can access your server at
-	- http://${hostname}.<your-tailnet-name>.ts.net${_port}`);
+	- http://${hostname}.${tailnet_name}.ts.net${_port}`);
 	if (ips.success) {
 		ips.value.forEach((ip) => {
 			const formattedIp = ip.includes(":") ? `[${ip}]` : ip;
@@ -173,7 +175,8 @@ function funnel({ port, hostname }: { port?: string; hostname?: string }) {
 			console.info(`\t\t- https://${domain}${_port}`);
 		}
 	} else {
-		console.info(`\t\t- https://${hostname}.<your-tailnet-name>.ts.net${_port}`);
+		const tailnet_name = Bun.env.LIBTAILSCALE_TAILNET_NAME ?? "<your-tailnet-name>";
+		console.info(`\t\t- https://${hostname}.${tailnet_name}.ts.net${_port}`);
 	}
 
 	handle_connections(listener);

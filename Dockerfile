@@ -1,6 +1,6 @@
-FROM ghcr.io/mastermakrela/libtailscale:latest AS builder
+FROM ghcr.io/mastermakrela/libtailscale:20250119-2239 AS builder
 
 FROM oven/bun:debian
-COPY --from=builder ./libtailscale.so /lib/libtailscale.so
+COPY --from=builder /var/lib/libtailscale.so /var/lib/libtailscale.so
 
-ENV LIBTAILSCALE_SO_PATH=/lib/libtailscale.so
+ENV LIBTAILSCALE_SO_PATH=/var/lib/libtailscale.so

@@ -22,6 +22,8 @@ bunx jsr add @mastermakrela/tailscale-js
 ```typescript
 import Tailscale from "@mastermakrela/tailscale-js";
 
+Bun.env.LIBTAILSCALE_TAILNET_NAME = "pango-lin";
+
 Tailscale.serve({
 	fetch(req) {
 		return new Response("Bun through Tailscale!");
@@ -29,8 +31,17 @@ Tailscale.serve({
 });
 ```
 
+Setting the `LIBTAILSCALE_TAILNET_NAME` env variable gives you nicer terminal message with clickable link.
+
 If you want to expose the server to the internet using a [funnel](https://tailscale.com/kb/1223/funnel),
 you can use `Tailscale.funnel` instead of `Tailscale.serve`.
+
+### Environment variables
+
+| Name                        | Description                                 |
+| --------------------------- | ------------------------------------------- |
+| `LIBTAILSCALE_SO_PATH`      | Path to the shared library                  |
+| `LIBTAILSCALE_TAILNET_NAME` | Tailnet name to use in the terminal message |
 
 ---
 
