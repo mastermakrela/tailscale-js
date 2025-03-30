@@ -1,4 +1,11 @@
-import type { ServeOptions, Server } from "./bun.d.ts";
+import type { DistributedOmit, RouterTypes, ServeFunctionOptions, ServeOptions, Server } from "bun";
+
+type TailscaleServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> = DistributedOmit<
+	ServeFunctionOptions<T, R>,
+	"websocket" | "unix" | "reusePort" | "ipv6Only" | "tls"
+> & {
+	tailscale?: TailscaleConfig;
+};
 
 export interface TailscaleConfig {
 	control_url?: string;
@@ -9,10 +16,6 @@ export interface TailscaleConfig {
 	port?: string;
 }
 
-export interface TailscaleServer extends Omit<ServeOptions, "reusePort" | "unix"> {
-	tailscale?: TailscaleConfig;
-}
-
 const WORKER_URL = import.meta.url.includes("$bunfs")
 	? "./tailscale_worker.ts"
 	: new URL("./tailscale_worker.ts", import.meta.url);
@@ -20,10 +23,30 @@ const WORKER_URL = import.meta.url.includes("$bunfs")
 let server: Server | undefined;
 let ts_worker: Worker;
 
-function parse_options(options: TailscaleServer) {
+function parse_options<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+	_options: TailscaleServeFunctionOptions<T, R>
+) {
+	for (const disallowed of ["unix", "reusePort", "ipv6Only", "tls"]) {
+		if (disallowed in _options) {
+			console.warn(
+				`[tailscale-js][${new Date().toUTCString()}] Option ${disallowed} is not supported when using Tailscale. it will be ignored`
+			);
+			// @ts-expect-error - we are deleting keys that shouldn't be there, so yeah TS is confused
+			delete _options[disallowed];
+		}
+	}
+
+	// after the check above and based on our custom type we assume that this type must be correct
+	let options = _options as ServeOptions & {
+		routes: {
+			[K in keyof R]: RouterTypes.RouteValueWithWebSocketUpgrade<Extract<K, string>>;
+		};
+		tailscale?: TailscaleConfig;
+	};
+
 	const tailscale_config = options.tailscale ?? {};
 	tailscale_config.ephemeral ??= true;
-	tailscale_config.hostname ??= options.hostname ?? "tailscalejs";
+	tailscale_config.hostname ??= options.hostname ?? "tailscale-js";
 	if (options.port) {
 		tailscale_config.port ??= `${options.port}`;
 		if (!tailscale_config.port.startsWith(":")) {
@@ -35,8 +58,8 @@ function parse_options(options: TailscaleServer) {
 	delete options.hostname;
 	delete options.port;
 
-	const id = options.id ?? "tailscalejs";
-	const unix = `/tmp/tailscalejs-${id}.sock`;
+	const id = options.id ?? "tailscale-js";
+	const unix = `/tmp/tailscale-js-${id}.sock`;
 
 	return {
 		unix,
@@ -60,7 +83,7 @@ async function handle_connection(unix: string, conn: number) {
 		unix,
 		socket: {
 			data(_, data) {
-				writer.write(data);
+				writer.write(data.buffer);
 			},
 			close(_) {
 				writer.end();
@@ -77,23 +100,43 @@ async function handle_connection(unix: string, conn: number) {
 	}
 }
 
-function create_worker({
-	server_config,
-	unix,
-}: {
-	unix: string;
-	tailscale_config: TailscaleConfig;
-	server_config: TailscaleServer;
-}) {
+function create_worker(
+	{
+		server_config,
+		unix,
+	}: {
+		unix: string;
+		tailscale_config: TailscaleConfig;
+		server_config: TailscaleServeFunctionOptions<any, any>;
+	},
+	resolve: (value?: Server | PromiseLike<Server> | undefined) => void
+) {
+	if (typeof Bun === "undefined") {
+		console.warn(`[tailscale-js][${new Date().toUTCString()}]
+Because every runtime (BUn, Deno, Node) has its own FFI and I had to start somewhere,
+this library is currently only compatible with Bun (https://bun.sh).
+
+If you want to use this library in Deno or Node, consider opening a PR or issue on GitHub:
+https://github.com/mastermakrela/tailscale-js/pulls
+		`);
+		process.exit(1);
+	}
+
 	if (ts_worker) {
-		console.error("Only one worker can be created at a time");
+		console.error(`[tailscale-js][${new Date().toUTCString()}] Only one worker can be created at a time`);
 		return;
 	}
 
-	ts_worker = new Worker(WORKER_URL);
+	// Fallback for npm package
+	try {
+		ts_worker = new Worker(new URL("./tailscale_worker", import.meta.url));
+	} catch (secondError) {
+		// Final fallback attempt
+		ts_worker = new Worker("./node_modules/@mastermakrela/tailscale-js/dist/tailscale_worker.js");
+	}
 
 	ts_worker.onerror = (error) => {
-		console.error(`[${new Date().toISOString()}][tailscale] error in worker:`, error.message ?? error);
+		console.error(`[tailscale-js][${new Date().toUTCString()}] Error in worker: ${error.message ?? error}`);
 	};
 
 	ts_worker.onmessage = async (event) => {
@@ -104,14 +147,20 @@ function create_worker({
 				server = Bun.serve({
 					...server_config,
 					unix,
+					// TODO: figure out how to make fetch optional if not provided from the user
 					async fetch(request, server) {
-						const resp = await server_config.fetch.bind(this)(request, server);
-						resp.headers.set("server", "tailscalejs-bun");
-						resp.headers.set("X-Powered-By", "Tailscale in Bun");
-						return resp;
+						const resp = await server_config.fetch?.bind(this)(request, server);
+						resp?.headers.set("server", "tailscale-js-bun");
+						resp?.headers.set("X-Powered-By", "Tailscale in Bun");
+						return resp ?? new Response(null, { status: 404 });
 					},
 				});
-				console.log(`[${new Date().toISOString()}][tailscale] Local server started`);
+				console.info(`[tailscale-js][${new Date().toUTCString()}] Local server started`);
+				console.info(
+					`[tailscale-js][${new Date().toUTCString()}] To stop the server use CTRL + \\ (Backslash) (CTRL + C will not work - seems to be a ffi bug)`
+				);
+				console.info();
+				resolve(server);
 				break;
 
 			case "connection":
@@ -121,11 +170,11 @@ function create_worker({
 				await handle_connection(unix, conn);
 				break;
 			case "exit":
-				console.error("Tailscale worker exited with code", event.data.code);
+				console.error(`[tailscale-js][${new Date().toUTCString()}] Tailscale worker exited with code ${event.data.code}`);
 				process.exit(event.data.code);
 				break;
 			default:
-				console.error("Unknown message type:", event.data.type);
+				console.error(`[tailscale-js][${new Date().toUTCString()}] Unknown message type: ${event.data.type}`);
 				break;
 		}
 	};
@@ -134,22 +183,34 @@ function create_worker({
 // MARK: Exported functions
 
 /**
- * Drop in replacement for Bun.serve that exposes the server in your tailnet.
+ * Drop-in replacement for `Bun.serve` that exposes the server in your tailnet.
  *
+ * @template T Type parameter for WebSocket data type
  * @param options - Server configuration options
- * @returns
+ * @returns Server instance (has to be awaited, because starting the worker is async)
  */
-function serve(options: TailscaleServer) {
+function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+	options: TailscaleServeFunctionOptions<T, R> & {
+		/**
+		 * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
+		 */
+		static?: R;
+	}
+): Promise<Server> {
 	if (server) {
-		console.error("Only one server can be started at a time");
-		return;
+		console.error(`[tailscale-js][${new Date().toUTCString()}] Only one server can be started at a time`);
+		throw new Error("Only one server can be started at a time");
 	}
 
-	const configs = parse_options(options);
+	const configs = parse_options<T, R>(options);
 
-	create_worker(configs);
+	const { resolve, promise } = Promise.withResolvers<Server>();
+
+	create_worker(configs, resolve);
 
 	ts_worker.postMessage({ type: "listen", config: configs.tailscale_config });
+
+	return promise;
 }
 
 /**
@@ -158,30 +219,41 @@ function serve(options: TailscaleServer) {
  * @param options - Server configuration options
  * @throws {Error} If a server is already running
  * @throws {Error} If an invalid port is specified (only 443, 8443, and 10000 are allowed for funnel)
+ * @returns Server instance (has to be awaited, because starting the worker is async)
  */
-function funnel(options: TailscaleServer) {
+function funnel<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+	options: TailscaleServeFunctionOptions<T, R> & {
+		/**
+		 * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
+		 */
+		static?: R;
+	}
+): Promise<Server> {
 	if (server) {
-		console.error("Only one server can be started at a time");
-		return;
+		console.error(`[tailscale-js][${new Date().toUTCString()}] Only one server can be started at a time`);
+		throw new Error("Only one server can be started at a time");
 	}
 
-	const configs = parse_options(options);
+	const configs = parse_options<T, R>(options);
 
 	if (configs.tailscale_config.port && !["443", "8443", "10000"].includes(configs.tailscale_config.port)) {
-		console.error("Invalid port for funnel");
-		return;
+		throw new Error("Invalid port for funnel");
 	}
 
-	create_worker(configs);
+	const { resolve, promise } = Promise.withResolvers<Server>();
+
+	create_worker(configs, resolve);
 
 	ts_worker.postMessage({ type: "funnel", config: configs.tailscale_config });
+
+	return promise;
 }
 
 /**
  * Represents the Tailscale client with available operations.
  *
  * @property serve - Starts server in the tailnet.
- * @property funnel - Starts server available to to the internet through Tailscale Funnel.
+ * @property funnel - Starts server available to the internet through Tailscale Funnel.
  */
 const Tailscale: {
 	serve: typeof serve;
@@ -193,4 +265,4 @@ const Tailscale: {
 
 export default Tailscale;
 
-export { serve, funnel };
+export { funnel, serve };

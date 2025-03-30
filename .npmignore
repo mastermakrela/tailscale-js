@@ -1,0 +1,17 @@
+# Source files (we publish only the dist folder)
+src/
+build/
+
+# Config files
+tsconfig.json
+bun.lockb
+jsr.json
+
+# CI/CD
+.github/
+Dockerfile
+
+# Development
+.vscode/
+node_modules/
+*.tgz

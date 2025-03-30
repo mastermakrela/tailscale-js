@@ -6,6 +6,7 @@
  */
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { existsSync } from "node:fs";
 
 // MARK: - Types
 
@@ -22,9 +23,53 @@ export type tailscale_conn_t = typeof FFI_tailscale_conn;
 
 // MARK: - Shared library
 
-const libtailscale_so = Bun.env.LIBTAILSCALE_SO_PATH ?? "./libtailscale";
+const libtailscale_so = () => {
+	if (Bun.env.LIBTAILSCALE_SO_PATH) return Bun.env.LIBTAILSCALE_SO_PATH;
 
-const { symbols: lib } = dlopen(libtailscale_so, {
+	const candidates = [
+		"libtailscale-darwin-arm64.dylib",
+		"libtailscale-darwin-amd64.dylib",
+		"libtailscale-linux-amd64.so",
+		"libtailscale-linux-arm64.so",
+	];
+
+	for (const candidate of candidates) {
+		if (existsSync(`./${candidate}`)) {
+			return candidate;
+		}
+	}
+
+	throw new Error("Could not find libtailscale");
+};
+
+let path = "./libtailscale";
+try {
+	path = libtailscale_so();
+} catch (e) {
+	console.error(`
+⚠️  ERROR: Could not find libtailscale shared library ⚠️
+
+Expected filenames in current directory:
+  • libtailscale-darwin-amd64.dylib   (macOS Intel)
+  • libtailscale-darwin-arm64.dylib   (macOS Apple Silicon)
+  • libtailscale-linux-amd64.so       (Linux x86_64)
+  • libtailscale-linux-arm64.so       (Linux ARM64)
+
+Resolution options:
+  1. Download pre-built library:
+     bun x tailscale-js get-libtailscale
+
+  2. Build it yourself:
+     https://github.com/mastermakrela/libtailscale?tab=readme-ov-file#building
+
+  3. If you have the file with a different name or location, set the environment variable:
+     LIBTAILSCALE_SO_PATH=./path/to/your/libtailscale.so bun your-script.ts
+`);
+
+	process.exit(1);
+}
+
+const { symbols: lib } = dlopen(path, {
 	tailscale_new: {
 		args: [],
 		returns: FFI_tailscale,
@@ -261,7 +306,12 @@ export function tailscale_listen_funnel(
 	} = {}
 ): Result<tailscale_listener_t> {
 	if (![":443", ":8443", ":10000"].includes(addr)) {
-		return { success: false, error: "Invalid addr TODO add link to docs" };
+		return {
+			success: false,
+			error: `Currently, only :443, :8443, and :10000 are supported.
+This is a Tailscale limitation, see: https://tailscale.com/kb/1223/funnel#requirements-and-limitations
+If this changes in the future, we will update this error message.`,
+		};
 	}
 
 	const network_str = encoder.encode(network + "\0");

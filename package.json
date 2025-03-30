@@ -1,12 +1,58 @@
 {
 	"name": "tailscale-js",
-	"module": "tailscale.ts",
+	"version": "0.4.0",
+	"description": "Tailscale library for TypeScript/JavaScript (Bun only)",
+	"license": "MIT",
 	"type": "module",
-	"types": "./src/types.d.ts",
+	"main": "dist/tailscale.js",
+	"module": "dist/tailscale.js",
+	"types": "dist/tailscale.d.ts",
+	"bin": {
+		"tailscale-js": "./dist/cli.js"
+	},
+	"exports": {
+		".": {
+			"import": "./dist/tailscale.js",
+			"types": "./dist/tailscale.d.ts"
+		},
+		"./libtailscale": {
+			"import": "./dist/libtailscale.js",
+			"types": "./dist/libtailscale.d.ts"
+		},
+		"./tailscale_worker": {
+			"import": "./dist/tailscale_worker.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"update:bun-types": "curl -o src/bun.d.ts https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/packages/bun-types/bun.d.ts",
+		"build": "rm -rf dist && mkdir -p dist && bun build ./src/tailscale.ts ./src/libtailscale.ts ./src/tailscale_worker.ts ./src/cli.ts --outdir ./dist --target=bun && tsc --emitDeclarationOnly --outDir dist",
+		"prepublishOnly": "bun run build"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/mastermakrela/tailscale-js"
+	},
+	"keywords": [
+		"tailscale",
+		"bun",
+		"networking",
+		"vpn"
+	],
 	"devDependencies": {
-		"@types/bun": "latest"
+		"typescript": "^5.8.2"
+	},
+	"dependencies": {
+		"@types/bun": "latest",
+		"bun-types": "^1.2.7"
 	},
 	"peerDependencies": {
-		"typescript": "^5.6.3"
+		"bun-types": "^1.2.7"
+	},
+	"engines": {
+		"bun": ">=1.0.0"
 	}
 }
